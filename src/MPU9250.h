@@ -22,9 +22,9 @@
 #ifndef MPU9250_h
 #define MPU9250_h
 
-#include "Arduino.h"
-#include "Wire.h"    // I2C library
-#include "SPI.h"     // SPI library
+#include <stdio.h>
+#include "pico/stdlib.h"
+#include "hardware/spi.h"
 
 class MPU9250{
   public:

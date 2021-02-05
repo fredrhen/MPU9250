@@ -19,21 +19,27 @@
   along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
-#include "Arduino.h"
 #include "MPU9250.h"
+#include <stdio.h>
+#include "pico/stdlib.h"
+#include "hardware/spi.h"
 
 /* MPU9250 object, input the I2C bus and address */
-MPU9250::MPU9250(TwoWire &bus,uint8_t address){
+MPU9250::MPU9250(int i, uint8_t cs_address){
+    switch(i) {
+        case 0 :
+            _address = cs_address;
+            _useSPI = false;
+            break;
+        case 1 :
+            _csPin = cs_address;
+            _useSPI = true;
+            break;
+    }
+
   _i2c = &bus; // I2C bus
   _address = address; // I2C address
   _useSPI = false; // set to use I2C
-}
-
-/* MPU9250 object, input the SPI bus and chip select pin */
-MPU9250::MPU9250(SPIClass &bus,uint8_t csPin){
-  _spi = &bus; // SPI bus
-  _csPin = csPin; // chip select pin
-  _useSPI = true; // set to use SPI
 }
 
 /* starts communication with the MPU-9250 */
