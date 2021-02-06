@@ -23,42 +23,38 @@
 #include <stdio.h>
 #include "pico/stdlib.h"
 #include "hardware/spi.h"
+#include <math.h>
 
-/* MPU9250 object, input the I2C bus and address */
-MPU9250::MPU9250(int i, uint8_t cs_address){
-    switch(i) {
-        case 0 :
-            _address = cs_address;
-            _useSPI = false;
-            break;
-        case 1 :
-            _csPin = cs_address;
-            _useSPI = true;
-            break;
-    }
 
-  _i2c = &bus; // I2C bus
-  _address = address; // I2C address
-  _useSPI = false; // set to use I2C
+
+
+/* MPU9250 object
+ * @param int for i2c or spi (0=i2c, 0!=spi)
+ *
+ */
+MPU9250::MPU9250(int i, uint8_t cs_pin){
+    _csPin = cs_pin;
+    _useSPI = true;
 }
 
 /* starts communication with the MPU-9250 */
 int MPU9250::begin(){
-  if( _useSPI ) { // using SPI for communication
+    // Initialise the SPI with the slow baud rate
+    spi_init(SPI_PORT, SPI_LS_CLOCK);
+
+    // Initialize the pins for using SPI to read the MPU_9250
+    gpio_set_function(PIN_MISO, GPIO_FUNC_SPI);
+    gpio_set_function(PIN_SCK, GPIO_FUNC_SPI);
+    gpio_set_function(PIN_MOSI, GPIO_FUNC_SPI);
+
+    gpio_init(_csPin);
+    gpio_set_dir(_csPin, GPIO_OUT); // Set the cs direction to out
     // use low speed SPI for register setting
     _useSPIHS = false;
-    // setting CS pin to output
-    pinMode(_csPin,OUTPUT);
     // setting CS pin high
-    digitalWrite(_csPin,HIGH);
-    // begin SPI communication
-    _spi->begin();
-  } else { // using I2C for communication
-    // starting the I2C bus
-    _i2c->begin();
-    // setting the I2C clock
-    _i2c->setClock(_i2cRate);
-  }
+    gpio_put(_csPin, 1);
+
+
   // select clock source to gyro
   if(writeRegister(PWR_MGMNT_1,CLOCK_SEL_PLL) < 0){
     return -1;
@@ -76,7 +72,7 @@ int MPU9250::begin(){
   // reset the MPU9250
   writeRegister(PWR_MGMNT_1,PWR_RESET);
   // wait for MPU-9250 to come back up
-  delay(1);
+  sleep_ms(1);
   // reset the AK8963
   writeAK8963Register(AK8963_CNTL2,AK8963_RESET);
   // select clock source to gyro
@@ -133,12 +129,12 @@ int MPU9250::begin(){
   if(writeAK8963Register(AK8963_CNTL1,AK8963_PWR_DOWN) < 0){
     return -15;
   }
-  delay(100); // long wait between AK8963 mode changes
+  sleep_ms(100); // long wait between AK8963 mode changes
   // set AK8963 to FUSE ROM access
   if(writeAK8963Register(AK8963_CNTL1,AK8963_FUSE_ROM) < 0){
     return -16;
   }
-  delay(100); // long wait between AK8963 mode changes
+  sleep_ms(100); // long wait between AK8963 mode changes
   // read the AK8963 ASA registers and compute magnetometer scale factors
   readAK8963Registers(AK8963_ASA,3,_buffer);
   _magScaleX = ((((float)_buffer[0]) - 128.0f)/(256.0f) + 1.0f) * 4912.0f / 32760.0f; // micro Tesla
@@ -148,12 +144,12 @@ int MPU9250::begin(){
   if(writeAK8963Register(AK8963_CNTL1,AK8963_PWR_DOWN) < 0){
     return -17;
   }
-  delay(100); // long wait between AK8963 mode changes  
+  sleep_ms(100); // long wait between AK8963 mode changes
   // set AK8963 to 16 bit resolution, 100 Hz update rate
   if(writeAK8963Register(AK8963_CNTL1,AK8963_CNT_MEAS2) < 0){
     return -18;
   }
-  delay(100); // long wait between AK8963 mode changes
+  sleep_ms(100); // long wait between AK8963 mode changes
   // select clock source to gyro
   if(writeRegister(PWR_MGMNT_1,CLOCK_SEL_PLL) < 0){
     return -19;
@@ -329,12 +325,12 @@ int MPU9250::setSrd(uint8_t srd) {
     if(writeAK8963Register(AK8963_CNTL1,AK8963_PWR_DOWN) < 0){
       return -2;
     }
-    delay(100); // long wait between AK8963 mode changes  
+    sleep_ms(100); // long wait between AK8963 mode changes
     // set AK8963 to 16 bit resolution, 8 Hz update rate
     if(writeAK8963Register(AK8963_CNTL1,AK8963_CNT_MEAS1) < 0){
       return -3;
     }
-    delay(100); // long wait between AK8963 mode changes     
+    sleep_ms(100); // long wait between AK8963 mode changes
     // instruct the MPU9250 to get 7 bytes of data from the AK8963 at the sample rate
     readAK8963Registers(AK8963_HXL,7,_buffer);
   } else {
@@ -342,12 +338,12 @@ int MPU9250::setSrd(uint8_t srd) {
     if(writeAK8963Register(AK8963_CNTL1,AK8963_PWR_DOWN) < 0){
       return -2;
     }
-    delay(100); // long wait between AK8963 mode changes  
+    sleep_ms(100); // long wait between AK8963 mode changes
     // set AK8963 to 16 bit resolution, 100 Hz update rate
     if(writeAK8963Register(AK8963_CNTL1,AK8963_CNT_MEAS2) < 0){
       return -3;
     }
-    delay(100); // long wait between AK8963 mode changes     
+    sleep_ms(100); // long wait between AK8963 mode changes
     // instruct the MPU9250 to get 7 bytes of data from the AK8963 at the sample rate
     readAK8963Registers(AK8963_HXL,7,_buffer);    
   } 
@@ -383,7 +379,7 @@ int MPU9250::disableDataReadyInterrupt() {
   return 1;
 }
 
-/* configures and enables wake on motion, low power mode */
+/* configures and enables wake on motion, low power mode
 int MPU9250::enableWakeOnMotion(float womThresh_mg,LpAccelOdr odr) {
   // use low speed SPI for register setting
   _useSPIHS = false;
@@ -392,7 +388,7 @@ int MPU9250::enableWakeOnMotion(float womThresh_mg,LpAccelOdr odr) {
   // reset the MPU9250
   writeRegister(PWR_MGMNT_1,PWR_RESET);
   // wait for MPU-9250 to come back up
-  delay(1);
+  sleep_ms(1);
   if(writeRegister(PWR_MGMNT_1,0x00) < 0){ // cycle 0, sleep 0, standby 0
     return -1;
   } 
@@ -420,24 +416,8 @@ int MPU9250::enableWakeOnMotion(float womThresh_mg,LpAccelOdr odr) {
   }
   return 1;
 }
+*/
 
-/* configures and enables the FIFO buffer  */
-int MPU9250FIFO::enableFifo(bool accel,bool gyro,bool mag,bool temp) {
-  // use low speed SPI for register setting
-  _useSPIHS = false;
-  if(writeRegister(USER_CTRL, (0x40 | I2C_MST_EN)) < 0){
-    return -1;
-  }
-  if(writeRegister(FIFO_EN,(accel*FIFO_ACCEL)|(gyro*FIFO_GYRO)|(mag*FIFO_MAG)|(temp*FIFO_TEMP)) < 0){
-    return -2;
-  }
-  _enFifoAccel = accel;
-  _enFifoGyro = gyro;
-  _enFifoMag = mag;
-  _enFifoTemp = temp;
-  _fifoFrameSize = accel*6 + gyro*6 + mag*7 + temp*2;
-  return 1;
-}
 
 /* reads the most current data from MPU9250 and stores in buffer */
 int MPU9250::readSensor() {
@@ -521,121 +501,7 @@ float MPU9250::getTemperature_C() {
   return _t;
 }
 
-/* reads data from the MPU9250 FIFO and stores in buffer */
-int MPU9250FIFO::readFifo() {
-  _useSPIHS = true; // use the high speed SPI for data readout
-  // get the fifo size
-  readRegisters(FIFO_COUNT, 2, _buffer);
-  _fifoSize = (((uint16_t) (_buffer[0]&0x0F)) <<8) + (((uint16_t) _buffer[1]));
-  // read and parse the buffer
-  for (size_t i=0; i < _fifoSize/_fifoFrameSize; i++) {
-    // grab the data from the MPU9250
-    if (readRegisters(FIFO_READ,_fifoFrameSize,_buffer) < 0) {
-      return -1;
-    }
-    if (_enFifoAccel) {
-      // combine into 16 bit values
-      _axcounts = (((int16_t)_buffer[0]) << 8) | _buffer[1];  
-      _aycounts = (((int16_t)_buffer[2]) << 8) | _buffer[3];
-      _azcounts = (((int16_t)_buffer[4]) << 8) | _buffer[5];
-      // transform and convert to float values
-      _axFifo[i] = (((float)(tX[0]*_axcounts + tX[1]*_aycounts + tX[2]*_azcounts) * _accelScale)-_axb)*_axs;
-      _ayFifo[i] = (((float)(tY[0]*_axcounts + tY[1]*_aycounts + tY[2]*_azcounts) * _accelScale)-_ayb)*_ays;
-      _azFifo[i] = (((float)(tZ[0]*_axcounts + tZ[1]*_aycounts + tZ[2]*_azcounts) * _accelScale)-_azb)*_azs;
-      _aSize = _fifoSize/_fifoFrameSize;
-    }
-    if (_enFifoTemp) {
-      // combine into 16 bit values
-      _tcounts = (((int16_t)_buffer[0 + _enFifoAccel*6]) << 8) | _buffer[1 + _enFifoAccel*6];
-      // transform and convert to float values
-      _tFifo[i] = ((((float) _tcounts) - _tempOffset)/_tempScale) + _tempOffset;
-      _tSize = _fifoSize/_fifoFrameSize;
-    }
-    if (_enFifoGyro) {
-      // combine into 16 bit values
-      _gxcounts = (((int16_t)_buffer[0 + _enFifoAccel*6 + _enFifoTemp*2]) << 8) | _buffer[1 + _enFifoAccel*6 + _enFifoTemp*2];
-      _gycounts = (((int16_t)_buffer[2 + _enFifoAccel*6 + _enFifoTemp*2]) << 8) | _buffer[3 + _enFifoAccel*6 + _enFifoTemp*2];
-      _gzcounts = (((int16_t)_buffer[4 + _enFifoAccel*6 + _enFifoTemp*2]) << 8) | _buffer[5 + _enFifoAccel*6 + _enFifoTemp*2];
-      // transform and convert to float values
-      _gxFifo[i] = ((float)(tX[0]*_gxcounts + tX[1]*_gycounts + tX[2]*_gzcounts) * _gyroScale) - _gxb;
-      _gyFifo[i] = ((float)(tY[0]*_gxcounts + tY[1]*_gycounts + tY[2]*_gzcounts) * _gyroScale) - _gyb;
-      _gzFifo[i] = ((float)(tZ[0]*_gxcounts + tZ[1]*_gycounts + tZ[2]*_gzcounts) * _gyroScale) - _gzb;
-      _gSize = _fifoSize/_fifoFrameSize;
-    }
-    if (_enFifoMag) {
-      // combine into 16 bit values
-      _hxcounts = (((int16_t)_buffer[1 + _enFifoAccel*6 + _enFifoTemp*2 + _enFifoGyro*6]) << 8) | _buffer[0 + _enFifoAccel*6 + _enFifoTemp*2 + _enFifoGyro*6];
-      _hycounts = (((int16_t)_buffer[3 + _enFifoAccel*6 + _enFifoTemp*2 + _enFifoGyro*6]) << 8) | _buffer[2 + _enFifoAccel*6 + _enFifoTemp*2 + _enFifoGyro*6];
-      _hzcounts = (((int16_t)_buffer[5 + _enFifoAccel*6 + _enFifoTemp*2 + _enFifoGyro*6]) << 8) | _buffer[4 + _enFifoAccel*6 + _enFifoTemp*2 + _enFifoGyro*6];
-      // transform and convert to float values
-      _hxFifo[i] = (((float)(_hxcounts) * _magScaleX) - _hxb)*_hxs;
-      _hyFifo[i] = (((float)(_hycounts) * _magScaleY) - _hyb)*_hys;
-      _hzFifo[i] = (((float)(_hzcounts) * _magScaleZ) - _hzb)*_hzs;
-      _hSize = _fifoSize/_fifoFrameSize;
-    }
-  }
-  return 1;
-}
 
-/* returns the accelerometer FIFO size and data in the x direction, m/s/s */
-void MPU9250FIFO::getFifoAccelX_mss(size_t *size,float* data) {
-  *size = _aSize;
-  memcpy(data,_axFifo,_aSize*sizeof(float));
-}
-
-/* returns the accelerometer FIFO size and data in the y direction, m/s/s */
-void MPU9250FIFO::getFifoAccelY_mss(size_t *size,float* data) {
-  *size = _aSize;
-  memcpy(data,_ayFifo,_aSize*sizeof(float));
-}
-
-/* returns the accelerometer FIFO size and data in the z direction, m/s/s */
-void MPU9250FIFO::getFifoAccelZ_mss(size_t *size,float* data) {
-  *size = _aSize;
-  memcpy(data,_azFifo,_aSize*sizeof(float));
-}
-
-/* returns the gyroscope FIFO size and data in the x direction, rad/s */
-void MPU9250FIFO::getFifoGyroX_rads(size_t *size,float* data) {
-  *size = _gSize;
-  memcpy(data,_gxFifo,_gSize*sizeof(float));
-}
-
-/* returns the gyroscope FIFO size and data in the y direction, rad/s */
-void MPU9250FIFO::getFifoGyroY_rads(size_t *size,float* data) {
-  *size = _gSize;
-  memcpy(data,_gyFifo,_gSize*sizeof(float));
-}
-
-/* returns the gyroscope FIFO size and data in the z direction, rad/s */
-void MPU9250FIFO::getFifoGyroZ_rads(size_t *size,float* data) {
-  *size = _gSize;
-  memcpy(data,_gzFifo,_gSize*sizeof(float));
-}
-
-/* returns the magnetometer FIFO size and data in the x direction, uT */
-void MPU9250FIFO::getFifoMagX_uT(size_t *size,float* data) {
-  *size = _hSize;
-  memcpy(data,_hxFifo,_hSize*sizeof(float));
-}
-
-/* returns the magnetometer FIFO size and data in the y direction, uT */
-void MPU9250FIFO::getFifoMagY_uT(size_t *size,float* data) {
-  *size = _hSize;
-  memcpy(data,_hyFifo,_hSize*sizeof(float));
-}
-
-/* returns the magnetometer FIFO size and data in the z direction, uT */
-void MPU9250FIFO::getFifoMagZ_uT(size_t *size,float* data) {
-  *size = _hSize;
-  memcpy(data,_hzFifo,_hSize*sizeof(float));
-}
-
-/* returns the die temperature FIFO size and data, C */
-void MPU9250FIFO::getFifoTemperature_C(size_t *size,float* data) {
-  *size = _tSize;
-  memcpy(data,_tFifo,_tSize*sizeof(float));  
-}
 
 /* estimates the gyro biases */
 int MPU9250::calibrateGyro() {
@@ -659,7 +525,7 @@ int MPU9250::calibrateGyro() {
     _gxbD += (getGyroX_rads() + _gxb)/((double)_numSamples);
     _gybD += (getGyroY_rads() + _gyb)/((double)_numSamples);
     _gzbD += (getGyroZ_rads() + _gzb)/((double)_numSamples);
-    delay(20);
+    sleep_ms(20);
   }
   _gxb = (float)_gxbD;
   _gyb = (float)_gybD;
@@ -732,7 +598,7 @@ int MPU9250::calibrateAccel() {
     _axbD += (getAccelX_mss()/_axs + _axb)/((double)_numSamples);
     _aybD += (getAccelY_mss()/_ays + _ayb)/((double)_numSamples);
     _azbD += (getAccelZ_mss()/_azs + _azb)/((double)_numSamples);
-    delay(20);
+    sleep_ms(20);
   }
   if (_axbD > 9.0f) {
     _axmax = (float)_axbD;
@@ -901,7 +767,7 @@ int MPU9250::calibrateMag() {
     } else {
       _counter++;
     }
-    delay(20);
+    sleep_ms(20);
   }
 
   // find the magnetometer bias
@@ -975,68 +841,40 @@ void MPU9250::setMagCalZ(float bias,float scaleFactor) {
 
 /* writes a byte to MPU9250 register given a register address and data */
 int MPU9250::writeRegister(uint8_t subAddress, uint8_t data){
-  /* write data to device */
-  if( _useSPI ){
-    _spi->beginTransaction(SPISettings(SPI_LS_CLOCK, MSBFIRST, SPI_MODE3)); // begin the transaction
-    digitalWrite(_csPin,LOW); // select the MPU9250 chip
-    _spi->transfer(subAddress); // write the register address
-    _spi->transfer(data); // write the data
-    digitalWrite(_csPin,HIGH); // deselect the MPU9250 chip
-    _spi->endTransaction(); // end the transaction
-  }
-  else{
-    _i2c->beginTransmission(_address); // open the device
-    _i2c->write(subAddress); // write the register address
-    _i2c->write(data); // write the data
-    _i2c->endTransmission();
-  }
+    /* write data to device */
 
-  delay(10);
-  
-  /* read back the register */
-  readRegisters(subAddress,1,_buffer);
-  /* check the read back register against the written register */
-  if(_buffer[0] == data) {
-    return 1;
-  }
-  else{
-    return -1;
-  }
+    uint8_t add_data[] = {subAddress, data};
+    spi_set_baudrate(SPI_PORT, SPI_LS_CLOCK);
+    cs_select();// select the MPU9250 chip
+    spi_write_blocking(SPI_PORT, add_data, 2); // write the register address
+    cs_deselect(); // deselect the MPU9250 chip
+
+
+    sleep_ms(10);
+
+    /* read back the register */
+    readRegisters(subAddress,1,_buffer);
+    /* check the read back register against the written register */
+    return (_buffer[0] == data) ? 1 :  -1;
+
 }
 
 /* reads registers from MPU9250 given a starting register address, number of bytes, and a pointer to store data */
 int MPU9250::readRegisters(uint8_t subAddress, uint8_t count, uint8_t* dest){
-  if( _useSPI ){
     // begin the transaction
+
     if(_useSPIHS){
-      _spi->beginTransaction(SPISettings(SPI_HS_CLOCK, MSBFIRST, SPI_MODE3));
+        spi_set_baudrate(SPI_PORT, SPI_HS_CLOCK);
     }
     else{
-      _spi->beginTransaction(SPISettings(SPI_LS_CLOCK, MSBFIRST, SPI_MODE3));
+        spi_set_baudrate(SPI_PORT, SPI_LS_CLOCK);
     }
-    digitalWrite(_csPin,LOW); // select the MPU9250 chip
-    _spi->transfer(subAddress | SPI_READ); // specify the starting register address
-    for(uint8_t i = 0; i < count; i++){
-      dest[i] = _spi->transfer(0x00); // read the data
-    }
-    digitalWrite(_csPin,HIGH); // deselect the MPU9250 chip
-    _spi->endTransaction(); // end the transaction
+    cs_select();
+    subAddress |= SPI_READ;
+    spi_write_blocking(SPI_PORT, &subAddress, 1);
+    spi_read_blocking(SPI_PORT, 0, dest, count);
+    cs_deselect();
     return 1;
-  }
-  else{
-    _i2c->beginTransmission(_address); // open the device
-    _i2c->write(subAddress); // specify the starting register address
-    _i2c->endTransmission(false);
-    _numBytes = _i2c->requestFrom(_address, count); // specify the number of bytes to receive
-    if (_numBytes == count) {
-      for(uint8_t i = 0; i < count; i++){ 
-        dest[i] = _i2c->read();
-      }
-      return 1;
-    } else {
-      return -1;
-    }
-  }
 }
 
 /* writes a register to the AK8963 given a register address and data */
@@ -1082,7 +920,7 @@ int MPU9250::readAK8963Registers(uint8_t subAddress, uint8_t count, uint8_t* des
 	if (writeRegister(I2C_SLV0_CTRL,I2C_SLV0_EN | count) < 0) {
     return -3;
   }
-	delay(1); // takes some time for these registers to fill
+	sleep_ms(1); // takes some time for these registers to fill
   // read the bytes off the MPU9250 EXT_SENS_DATA registers
 	_status = readRegisters(EXT_SENS_DATA_00,count,dest); 
   return _status;
@@ -1106,4 +944,18 @@ int MPU9250::whoAmIAK8963(){
   }
   // return the register value
   return _buffer[0];
+}
+
+void MPU9250::cs_select() const {
+    // Ties the CS pin low to tell the peripheral to wake up
+    asm volatile("nop \n nop \n nop"); // Assembly three no operation commands (short delay)
+    gpio_put(_csPin, 0);  // Active low
+    asm volatile("nop \n nop \n nop");
+}
+
+void MPU9250::cs_deselect() const {
+    // Ties the CS pin high to tell the peripheral to sleep
+    asm volatile("nop \n nop \n nop");
+    gpio_put(_csPin, 1);
+    asm volatile("nop \n nop \n nop");
 }
